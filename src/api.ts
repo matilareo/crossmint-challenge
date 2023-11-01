@@ -1,58 +1,11 @@
 import axios, { AxiosInstance } from "axios";
+import { AstralObject, AstralObjectArgs, ComethsDirection, MegaverseConfig, ParsedMegaverseMap, SoloonsColor } from "./types";
 
-enum AstralObject {
-	POLYANETS = "polyanets",
-	SOLOONS = "soloons",
-	COMETHS = "comeths"
-}
 
-enum SoloonsColor {
-	BLUE = "blue",
-	RED = "red",
-	PURPLE = "purple",
-	WHITE = "white"
-}
+export class MegaverseApi {
 
-enum ComethsDirection {
-	UP = "up",
-	DOWN = "down",
-	RIGHT = "right",
-	LEFT = "left"
-}
-
-export interface AstralObjectPosition {
-	row: number,
-	column: number
-}
-
-interface MegaverseConfig {
-	baseUrl: string,
-	candidateId: string,
-	bounds: {
-		rows: number,
-		columns: number
-	}
-}
-
-interface AstralObjectSetArgs {
-	row: number,
-	column: number
-}
-
-interface PolyanetsSetArgs extends AstralObjectPosition {
-
-}
-
-interface SoloonsSetArgs extends AstralObjectPosition {
-	color: SoloonsColor
-}
-
-interface ComethsSetArgs extends AstralObjectPosition {
-	direction: ComethsDirection
-}
-
-abstract class BaseAstralObjectApi<T extends AstralObjectSetArgs> {
 	private httpClient: AxiosInstance;
+
 	constructor(readonly config: MegaverseConfig) {
 		const client = axios.create({ baseURL: config.baseUrl, data: { candidateId: config.candidateId } })
 		client.interceptors.request.use(
@@ -69,94 +22,65 @@ abstract class BaseAstralObjectApi<T extends AstralObjectSetArgs> {
 		);
 		this.httpClient = client;
 	}
-	abstract readonly astralObject: AstralObject;
-	async set(args: T): Promise<void> {
+
+	private parseAstralObject = (astralObject: string): [string, { color?: SoloonsColor, direction?: ComethsDirection }] => {
+		const splited = astralObject.split('_');
+		let name: string;
+		let args: { color?: SoloonsColor, direction?: ComethsDirection } = {};
+		if (splited[1]) {
+			name = splited[1];
+			const argValue = splited[0].toLowerCase()
+			if ((Object.values(SoloonsColor)).includes(argValue as SoloonsColor))
+				args = { color: argValue as SoloonsColor }
+			else {
+				args = { direction: argValue as ComethsDirection }
+			}
+		}
+		else {
+			name = splited[0];
+		}
+
+		return [name, args];
+	}
+
+	private astralObjectToToken = (name: string): AstralObject | undefined => {
+		const result: AstralObject = name.toLowerCase() + 's' as AstralObject;
+		if (!Object.values(AstralObject).includes(result))
+			return undefined;
+		return result;
+	}
+
+	private parseMap = (megaverse: string[][]): ParsedMegaverseMap => {
+		const result: { [key: string]: AstralObjectArgs[] } = {};
+		megaverse.forEach((megaverseRow, rowIndex) => {
+			megaverseRow.forEach((elm, columnIndex) => {
+				const [name, args] = this.parseAstralObject(elm);
+				const astralObjectApiToken = this.astralObjectToToken(name);
+				if (!astralObjectApiToken)
+					return;
+				if (!result[`${astralObjectApiToken}`])
+					result[`${astralObjectApiToken}`] = [];
+				result[`${astralObjectApiToken}`].push({ column: columnIndex, row: rowIndex, ...args })
+			})
+		})
+		return result;
+	}
+
+	async set(astralObject: AstralObject, args: AstralObjectArgs): Promise<void> {
 		if (args.column > this.config.bounds.columns || args.row > this.config.bounds.rows)
-			return;
-		await this.httpClient.post(`/api/${this.astralObject}`, args)
-	}
-	async delete(position: AstralObjectPosition): Promise<void> {
-		await this.httpClient.delete(`/api/${this.astralObject}`, { data: { ...position } })
-	}
-	async getMap(): Promise<any> {
-		return await this.httpClient.get(`/api/map/${this.config.candidateId}/goal`)
-	}
-}
-
-export class PolyanetsApi extends BaseAstralObjectApi<PolyanetsSetArgs> {
-	astralObject = AstralObject.POLYANETS;
-}
-
-export class SoloonsApi extends BaseAstralObjectApi<SoloonsSetArgs> {
-	astralObject = AstralObject.SOLOONS;
-
-}
-export class ComethsApi extends BaseAstralObjectApi<ComethsSetArgs> {
-	astralObject = AstralObject.COMETHS;
-}
-
-export class MegaverseDrawer {
-
-	constructor(private polyanetsApi: PolyanetsApi, private soloonsApi: SoloonsApi, private comethsApi: ComethsApi) {
+			throw `Request out of bounds, bounds are: { rows: ${this.config.bounds.rows}, columns: ${this.config.bounds.columns} }`;
+		console.log(`${`/api/${astralObject}` + ' ' + JSON.stringify(args)}`)
+		await this.httpClient.post(`/api/${astralObject}`, args)
 	}
 
-	// async deleteAstralObjectFromMap(api: BaseAstralObjectApi<AstralObjectSetArgs>) {
-	// 	const promArr = [];
-	// 	for (let i = 0; i < api.config.bounds.columns; i++) {
-	// 		for (let j = 0; j < api.config.bounds.rows; j++) {
-	// 			promArr.push(api.delete({ row: i, column: j }));
-	// 		}
-	// 	}
-	// 	await Promise.all(promArr);
-	// }
-
-	async deleteAstralObjectFromMap(api: BaseAstralObjectApi<AstralObjectSetArgs>) {
-		for (let i = 0; i < api.config.bounds.columns; i++) {
-			for (let j = 0; j < api.config.bounds.rows; j++) {
-				console.log(`deleting (${i};${j})`)
-				await sleep(1000)
-				await api.delete({ row: i, column: j });
-			}
-		}
+	async delete(astralObject: AstralObject, args: AstralObjectArgs): Promise<void> {
+		await this.httpClient.delete(`/api/${astralObject}`, { data: { ...args } })
 	}
 
-	// async drawX(api: BaseAstralObjectApi<AstralObjectSetArgs>, size: number, startPosition: AstralObjectPosition) {
-	// 	if (size > api.config.bounds.columns || size > api.config.bounds.rows) {
-	// 		throw `Invalid X size`
-	// 	}
-	// 	if (startPosition.column + size > api.config.bounds.columns || startPosition.row + size > api.config.bounds.rows) {
-	// 		throw `Invalid starting position`
-	// 	}
-
-	// 	const promArr = [];
-	// 	for (let i = startPosition.column; i < startPosition.column + size; i++) {
-	// 		for (let j = startPosition.row; j < startPosition.row + size; j++) {
-	// 			promArr.push(api.set({ row: i, column: j }));
-	// 		}
-	// 	}
-	// 	await Promise.all(promArr);
-	// }
-	async drawX(api: BaseAstralObjectApi<AstralObjectSetArgs>, size: number, startPosition: AstralObjectPosition) {
-		if (size > api.config.bounds.columns || size > api.config.bounds.rows) {
-			throw `Invalid X size`
-		}
-		if (startPosition.column + size > api.config.bounds.columns || startPosition.row + size > api.config.bounds.rows) {
-			throw `Invalid starting position`
-		}
-
-		for (let i = startPosition.column; i < startPosition.column + size; i++) {
-			for (let j = startPosition.row; j < startPosition.row + size; j++) {
-				if (i == j || j == -i + startPosition.column + size + 1) {
-					console.log(`drawing x (${i};${j})`)
-					await sleep(1000)
-					await api.set({ row: i, column: j });
-				}
-
-
-			}
-		}
+	async getMap(): Promise<ParsedMegaverseMap> {
+		return this.parseMap((await this.httpClient.get(`/api/map/${this.config.candidateId}/goal`)).data.goal)
 	}
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
